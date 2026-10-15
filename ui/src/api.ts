@@ -32,6 +32,12 @@ export interface ListSchedulerEntriesResponse {
   entries: SchedulerEntry[];
 }
 
+export interface RunSchedulerEntryResponse {
+  task_id: string;
+  queue: string;
+  task_type: string;
+}
+
 export interface ListSchedulerEnqueueEventsResponse {
   events: SchedulerEnqueueEvent[];
 }
@@ -352,6 +358,8 @@ export interface SchedulerEntry {
   // prev_enqueue_at will be omitted
   // if there were no previous enqueue events.
   prev_enqueue_at?: string;
+  // run_allowed is true if the entry can be enqueued on demand ("Run now").
+  run_allowed?: boolean;
 }
 
 export interface SchedulerEnqueueEvent {
@@ -1047,6 +1055,18 @@ export async function listSchedulerEnqueueEvents(
   const resp = await axios({
     method: "get",
     url: `${getBaseUrl()}/scheduler_entries/${entryId}/enqueue_events`,
+  });
+  return resp.data;
+}
+
+export async function runSchedulerEntry(
+  entryId: string
+): Promise<RunSchedulerEntryResponse> {
+  const resp = await axios({
+    method: "post",
+    url: `${getBaseUrl()}/scheduler_entries/${entryId}/run`,
+    // The server requires this header on run-now requests (CSRF protection).
+    headers: { "X-Requested-With": "XMLHttpRequest" },
   });
   return resp.data;
 }

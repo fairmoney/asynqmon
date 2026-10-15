@@ -49,6 +49,11 @@ import {
   ARCHIVE_ALL_AGGREGATING_TASKS_SUCCESS,
   DELETE_ALL_AGGREGATING_TASKS_SUCCESS,
 } from "../actions/tasksActions";
+import {
+  RUN_SCHEDULER_ENTRY_ERROR,
+  RUN_SCHEDULER_ENTRY_SUCCESS,
+  SchedulerEntriesActionTypes,
+} from "../actions/schedulerEntriesActions";
 
 interface SnackbarState {
   isOpen: boolean;
@@ -62,7 +67,7 @@ const initialState: SnackbarState = {
 
 function snackbarReducer(
   state = initialState,
-  action: TasksActionTypes | SnackbarActionTypes
+  action: TasksActionTypes | SnackbarActionTypes | SchedulerEntriesActionTypes
 ): SnackbarState {
   switch (action.type) {
     case CLOSE_SNACKBAR:
@@ -378,6 +383,18 @@ function snackbarReducer(
       return {
         isOpen: true,
         message: `${n} completed ${n === 1 ? "task" : "tasks"} deleted`,
+      };
+
+    case RUN_SCHEDULER_ENTRY_SUCCESS:
+      return {
+        isOpen: true,
+        message: `${action.payload.task_type} task is now pending in ${action.payload.queue} queue`,
+      };
+
+    case RUN_SCHEDULER_ENTRY_ERROR:
+      return {
+        isOpen: true,
+        message: `Could not run task: ${action.error}`,
       };
 
     default:

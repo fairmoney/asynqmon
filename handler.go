@@ -42,6 +42,14 @@ type Options struct {
 
 	// Set ReadOnly to true to restrict user to view-only mode.
 	ReadOnly bool
+
+	// AllowRunNow reports whether the scheduler entry with the given task type
+	// may be enqueued on demand ("Run now") from the UI.
+	//
+	// This field is optional. If nil, the run-now endpoint is not registered.
+	// If set, POST /api/scheduler_entries/{entry_id}/run is registered and it is
+	// available even when ReadOnly is true.
+	AllowRunNow func(taskType string) bool
 }
 
 // HTTPHandler is a http.Handler for asynqmon application.
@@ -73,9 +81,16 @@ func New(opts Options) *HTTPHandler {
 	// Remove tailing slash from RootPath.
 	opts.RootPath = strings.TrimSuffix(opts.RootPath, "/")
 
+	closers := []func() error{rc.Close, i.Close}
+	var client *asynq.Client
+	if opts.AllowRunNow != nil {
+		client = asynq.NewClient(opts.RedisConnOpt)
+		closers = append(closers, client.Close)
+	}
+
 	return &HTTPHandler{
-		router:   muxRouter(opts, rc, i),
-		closers:  []func() error{rc.Close, i.Close},
+		router:   muxRouter(opts, rc, i, client),
+		closers:  closers,
 		rootPath: opts.RootPath,
 	}
 }
@@ -99,7 +114,7 @@ func (h *HTTPHandler) RootPath() string {
 //go:embed ui/build/*
 var staticContents embed.FS
 
-func muxRouter(opts Options, rc redis.UniversalClient, inspector *asynq.Inspector) *mux.Router {
+func muxRouter(opts Options, rc redis.UniversalClient, inspector *asynq.Inspector, client *asynq.Client) *mux.Router {
 	router := mux.NewRouter().PathPrefix(opts.RootPath).Subrouter()
 
 	var payloadFmt PayloadFormatter = DefaultPayloadFormatter
@@ -110,6 +125,12 @@ func muxRouter(opts Options, rc redis.UniversalClient, inspector *asynq.Inspecto
 	var resultFmt ResultFormatter = DefaultResultFormatter
 	if opts.ResultFormatter != nil {
 		resultFmt = opts.ResultFormatter
+	}
+
+	// Run-now endpoint for scheduler entries. It is registered on the root router,
+	// before the api subrouter, so that the read-only middleware does not apply to it.
+	if opts.AllowRunNow != nil {
+		router.HandleFunc("/api/scheduler_entries/{entry_id}/run", newRunSchedulerEntryHandlerFunc(inspector, client, opts.AllowRunNow)).Methods("POST")
 	}
 
 	api := router.PathPrefix("/api").Subrouter()
@@ -193,7 +214,7 @@ func muxRouter(opts Options, rc redis.UniversalClient, inspector *asynq.Inspecto
 	api.HandleFunc("/servers", newListServersHandlerFunc(inspector, payloadFmt)).Methods("GET")
 
 	// Scheduler Entry endpoints.
-	api.HandleFunc("/scheduler_entries", newListSchedulerEntriesHandlerFunc(inspector, payloadFmt)).Methods("GET")
+	api.HandleFunc("/scheduler_entries", newListSchedulerEntriesHandlerFunc(inspector, payloadFmt, opts.AllowRunNow)).Methods("GET")
 	api.HandleFunc("/scheduler_entries/{entry_id}/enqueue_events", newListSchedulerEnqueueEventsHandlerFunc(inspector)).Methods("GET")
 
 	// Redis info endpoint.

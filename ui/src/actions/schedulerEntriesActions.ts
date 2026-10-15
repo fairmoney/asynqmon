@@ -4,6 +4,8 @@ import {
   ListSchedulerEnqueueEventsResponse,
   listSchedulerEntries,
   ListSchedulerEntriesResponse,
+  runSchedulerEntry,
+  RunSchedulerEntryResponse,
 } from "../api";
 import { toErrorString, toErrorStringWithHttpStatus } from "../utils";
 
@@ -17,6 +19,9 @@ export const LIST_SCHEDULER_ENQUEUE_EVENTS_SUCCESS =
   "LIST_SCHEDULER_ENQUEUE_EVENTS_SUCCESS";
 export const LIST_SCHEDULER_ENQUEUE_EVENTS_ERROR =
   "LIST_SCHEDULER_ENQUEUE_EVENTS_ERROR";
+export const RUN_SCHEDULER_ENTRY_BEGIN = "RUN_SCHEDULER_ENTRY_BEGIN";
+export const RUN_SCHEDULER_ENTRY_SUCCESS = "RUN_SCHEDULER_ENTRY_SUCCESS";
+export const RUN_SCHEDULER_ENTRY_ERROR = "RUN_SCHEDULER_ENTRY_ERROR";
 
 interface ListSchedulerEntriesBeginAction {
   type: typeof LIST_SCHEDULER_ENTRIES_BEGIN;
@@ -49,6 +54,23 @@ interface ListSchedulerEnqueueEventErrorAction {
   error: string;
 }
 
+interface RunSchedulerEntryBeginAction {
+  type: typeof RUN_SCHEDULER_ENTRY_BEGIN;
+  entryId: string;
+}
+
+interface RunSchedulerEntrySuccessAction {
+  type: typeof RUN_SCHEDULER_ENTRY_SUCCESS;
+  entryId: string;
+  payload: RunSchedulerEntryResponse;
+}
+
+interface RunSchedulerEntryErrorAction {
+  type: typeof RUN_SCHEDULER_ENTRY_ERROR;
+  entryId: string;
+  error: string;
+}
+
 // Union of all scheduler-entry related actions.
 export type SchedulerEntriesActionTypes =
   | ListSchedulerEntriesBeginAction
@@ -56,7 +78,10 @@ export type SchedulerEntriesActionTypes =
   | ListSchedulerEntriesErrorAction
   | ListSchedulerEnqueueEventBeginAction
   | ListSchedulerEnqueueEventSuccessAction
-  | ListSchedulerEnqueueEventErrorAction;
+  | ListSchedulerEnqueueEventErrorAction
+  | RunSchedulerEntryBeginAction
+  | RunSchedulerEntrySuccessAction
+  | RunSchedulerEntryErrorAction;
 
 export function listSchedulerEntriesAsync() {
   return async (dispatch: Dispatch<SchedulerEntriesActionTypes>) => {
@@ -97,6 +122,33 @@ export function listSchedulerEnqueueEventsAsync(entryId: string) {
       dispatch({
         type: LIST_SCHEDULER_ENQUEUE_EVENTS_ERROR,
         error: toErrorString(error),
+        entryId,
+      });
+    }
+  };
+}
+
+export function runSchedulerEntryAsync(entryId: string) {
+  return async (dispatch: Dispatch<SchedulerEntriesActionTypes>) => {
+    dispatch({ type: RUN_SCHEDULER_ENTRY_BEGIN, entryId });
+    try {
+      const response = await runSchedulerEntry(entryId);
+      dispatch({
+        type: RUN_SCHEDULER_ENTRY_SUCCESS,
+        payload: response,
+        entryId,
+      });
+    } catch (error) {
+      console.error(
+        "runSchedulerEntryAsync: ",
+        toErrorStringWithHttpStatus(error)
+      );
+      dispatch({
+        type: RUN_SCHEDULER_ENTRY_ERROR,
+        error:
+          error.response?.status === 409
+            ? "Already queued or running"
+            : toErrorString(error),
         entryId,
       });
     }

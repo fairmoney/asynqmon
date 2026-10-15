@@ -492,6 +492,8 @@ type schedulerEntry struct {
 	NextEnqueueAt string   `json:"next_enqueue_at"`
 	// This field is omitted if there were no previous enqueue events.
 	PrevEnqueueAt string `json:"prev_enqueue_at,omitempty"`
+	// RunAllowed reports whether the entry can be enqueued on demand (see Options.AllowRunNow).
+	RunAllowed bool `json:"run_allowed"`
 }
 
 func toSchedulerEntry(e *asynq.SchedulerEntry, pf PayloadFormatter) *schedulerEntry {
