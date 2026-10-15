@@ -43,13 +43,16 @@ type Options struct {
 	// Set ReadOnly to true to restrict user to view-only mode.
 	ReadOnly bool
 
-	// AllowRunNow reports whether the scheduler entry with the given task type
-	// may be enqueued on demand ("Run now") from the UI.
+	// AllowRunNow reports whether a scheduler entry may be enqueued on demand
+	// ("Run now") from the UI. queue is the queue the entry's own options name,
+	// or "default" when they name none. A caller can refuse an entry whose queue
+	// is not the expected one, for example a stale entry written by an older
+	// scheduler without options.
 	//
 	// This field is optional. If nil, the run-now endpoint is not registered.
 	// If set, POST /api/scheduler_entries/{entry_id}/run is registered and it is
 	// available even when ReadOnly is true.
-	AllowRunNow func(taskType string) bool
+	AllowRunNow func(taskType, queue string) bool
 }
 
 // HTTPHandler is a http.Handler for asynqmon application.

@@ -17,7 +17,7 @@ import (
 //   - http.Handler(s) for scheduler entry related endpoints
 // ****************************************************************************
 
-func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFormatter, allowRunNow func(string) bool) http.HandlerFunc {
+func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFormatter, allowRunNow func(string, string) bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries, err := inspector.SchedulerEntries()
 		if err != nil {
@@ -31,8 +31,8 @@ func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFo
 		} else {
 			out := toSchedulerEntries(entries, pf)
 			if allowRunNow != nil {
-				for _, e := range out {
-					e.RunAllowed = allowRunNow(e.TaskType)
+				for i, e := range out {
+					e.RunAllowed = allowRunNow(e.TaskType, entryQueue(entries[i].Opts))
 				}
 			}
 			payload["entries"] = out
@@ -84,7 +84,7 @@ const (
 
 // newRunSchedulerEntryHandlerFunc returns a handler that enqueues the task of a
 // scheduler entry once, with the same type, payload and options as the scheduler uses.
-func newRunSchedulerEntryHandlerFunc(inspector *asynq.Inspector, client *asynq.Client, allowRunNow func(string) bool) http.HandlerFunc {
+func newRunSchedulerEntryHandlerFunc(inspector *asynq.Inspector, client *asynq.Client, allowRunNow func(string, string) bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(runNowCSRFHeader) != runNowCSRFValue {
 			http.Error(w, fmt.Sprintf("%s: %s header is required", http.StatusText(http.StatusForbidden), runNowCSRFHeader), http.StatusForbidden)
@@ -107,8 +107,8 @@ func newRunSchedulerEntryHandlerFunc(inspector *asynq.Inspector, client *asynq.C
 			http.Error(w, fmt.Sprintf("scheduler entry %q not found", entryID), http.StatusNotFound)
 			return
 		}
-		if !allowRunNow(entry.Task.Type()) {
-			http.Error(w, fmt.Sprintf("task type %q is not allowed to run on demand", entry.Task.Type()), http.StatusForbidden)
+		if queue := entryQueue(entry.Opts); !allowRunNow(entry.Task.Type(), queue) {
+			http.Error(w, fmt.Sprintf("task type %q on queue %q is not allowed to run on demand", entry.Task.Type(), queue), http.StatusForbidden)
 			return
 		}
 		info, err := client.EnqueueContext(r.Context(), entry.Task, entry.Opts...)
@@ -137,4 +137,18 @@ func runNowCaller(r *http.Request) string {
 		return fmt.Sprintf("%s (x-forwarded-for: %s)", r.RemoteAddr, fwd)
 	}
 	return r.RemoteAddr
+}
+
+// entryQueue is the queue a scheduler entry's task is enqueued on: the last
+// Queue option, as asynq applies it, or "default" when the entry has none.
+func entryQueue(opts []asynq.Option) string {
+	queue := "default"
+	for _, opt := range opts {
+		if opt.Type() == asynq.QueueOpt {
+			if name, ok := opt.Value().(string); ok {
+				queue = name
+			}
+		}
+	}
+	return queue
 }
