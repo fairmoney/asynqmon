@@ -2,6 +2,8 @@ package asynqmon
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -14,7 +16,7 @@ import (
 //   - http.Handler(s) for scheduler entry related endpoints
 // ****************************************************************************
 
-func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFormatter) http.HandlerFunc {
+func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFormatter, allowRunNow func(string) bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entries, err := inspector.SchedulerEntries()
 		if err != nil {
@@ -26,7 +28,13 @@ func newListSchedulerEntriesHandlerFunc(inspector *asynq.Inspector, pf PayloadFo
 			// avoid nil for the entries field in json output.
 			payload["entries"] = make([]*schedulerEntry, 0)
 		} else {
-			payload["entries"] = toSchedulerEntries(entries, pf)
+			out := toSchedulerEntries(entries, pf)
+			if allowRunNow != nil {
+				for _, e := range out {
+					e.RunAllowed = allowRunNow(e.TaskType)
+				}
+			}
+			payload["entries"] = out
 		}
 		if err := json.NewEncoder(w).Encode(payload); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -52,6 +60,54 @@ func newListSchedulerEnqueueEventsHandlerFunc(inspector *asynq.Inspector) http.H
 		resp := listSchedulerEnqueueEventsResponse{
 			Events: toSchedulerEnqueueEvents(events),
 		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+type runSchedulerEntryResponse struct {
+	TaskID   string `json:"task_id"`
+	Queue    string `json:"queue"`
+	TaskType string `json:"task_type"`
+}
+
+// newRunSchedulerEntryHandlerFunc returns a handler that enqueues the task of a
+// scheduler entry once, with the same type, payload and options as the scheduler uses.
+func newRunSchedulerEntryHandlerFunc(inspector *asynq.Inspector, client *asynq.Client, allowRunNow func(string) bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entryID := mux.Vars(r)["entry_id"]
+		entries, err := inspector.SchedulerEntries()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var entry *asynq.SchedulerEntry
+		for _, e := range entries {
+			if e.ID == entryID {
+				entry = e
+				break
+			}
+		}
+		if entry == nil {
+			http.Error(w, fmt.Sprintf("scheduler entry %q not found", entryID), http.StatusNotFound)
+			return
+		}
+		if !allowRunNow(entry.Task.Type()) {
+			http.Error(w, fmt.Sprintf("task type %q is not allowed to run on demand", entry.Task.Type()), http.StatusForbidden)
+			return
+		}
+		info, err := client.EnqueueContext(r.Context(), entry.Task, entry.Opts...)
+		switch {
+		case errors.Is(err, asynq.ErrDuplicateTask), errors.Is(err, asynq.ErrTaskIDConflict):
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		case err != nil:
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := runSchedulerEntryResponse{TaskID: info.ID, Queue: info.Queue, TaskType: info.Type}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
