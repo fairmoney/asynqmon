@@ -1,4 +1,4 @@
-module github.com/hibiken/asynqmon
+module github.com/fairmoney/asynqmon
 
 go 1.24.0
 
