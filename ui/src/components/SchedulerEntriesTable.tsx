@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { connect, ConnectedProps } from "react-redux";
 import clsx from "clsx";
 import { makeStyles } from "@material-ui/core/styles";
 import IconButton from "@material-ui/core/IconButton";
@@ -12,6 +13,11 @@ import Modal from "@material-ui/core/Modal";
 import Typography from "@material-ui/core/Typography";
 import Tooltip from "@material-ui/core/Tooltip";
 import HistoryIcon from "@material-ui/icons/History";
+import PlayArrowIcon from "@material-ui/icons/PlayArrow";
+import Button from "@material-ui/core/Button";
+import Dialog from "@material-ui/core/Dialog";
+import DialogActions from "@material-ui/core/DialogActions";
+import DialogTitle from "@material-ui/core/DialogTitle";
 import Alert from "@material-ui/lab/Alert";
 import AlertTitle from "@material-ui/lab/AlertTitle";
 import { SortDirection, SortableTableColumn } from "../types/table";
@@ -20,6 +26,7 @@ import SyntaxHighlighter from "./SyntaxHighlighter";
 import { SchedulerEntry } from "../api";
 import { timeAgo, durationBefore, prettifyPayload } from "../utils";
 import SchedulerEnqueueEventsTable from "./SchedulerEnqueueEventsTable";
+import { runSchedulerEntryAsync } from "../actions/schedulerEntriesActions";
 
 const useStyles = makeStyles((theme) => ({
   table: {
@@ -129,8 +136,13 @@ interface Props {
   entries: SchedulerEntry[];
 }
 
-export default function SchedulerEntriesTable(props: Props) {
+const connector = connect(null, { runSchedulerEntryAsync });
+
+type ReduxProps = ConnectedProps<typeof connector>;
+
+function SchedulerEntriesTable(props: Props & ReduxProps) {
   const classes = useStyles();
+  const [runEntry, setRunEntry] = useState<SchedulerEntry | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>(SortBy.EntryId);
   const [sortDir, setSortDir] = useState<SortDirection>(SortDirection.Asc);
   const [activeEntryId, setActiveEntryId] = useState<string>("");
@@ -230,6 +242,7 @@ export default function SchedulerEntriesTable(props: Props) {
                 entry={entry}
                 isLastRow={idx === props.entries.length - 1}
                 onShowHistoryClick={() => setActiveEntryId(entry.id)}
+                onRunClick={() => setRunEntry(entry)}
               />
             ))}
           </TableBody>
@@ -246,15 +259,44 @@ export default function SchedulerEntriesTable(props: Props) {
             <SchedulerEnqueueEventsTable entryId={activeEntryId} />
           </div>
         </Modal>
+        <Dialog
+          open={runEntry !== null}
+          onClose={() => setRunEntry(null)}
+          aria-labelledby="run-entry-dialog-title"
+        >
+          <DialogTitle id="run-entry-dialog-title">
+            Run {runEntry?.task_type} now?
+          </DialogTitle>
+          <DialogActions>
+            <Button onClick={() => setRunEntry(null)} color="primary">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (runEntry) {
+                  props.runSchedulerEntryAsync(runEntry.id);
+                }
+                setRunEntry(null);
+              }}
+              color="primary"
+              autoFocus
+            >
+              Run
+            </Button>
+          </DialogActions>
+        </Dialog>
       </TableContainer>
     </>
   );
 }
 
+export default connector(SchedulerEntriesTable);
+
 interface RowProps {
   entry: SchedulerEntry;
   isLastRow: boolean;
   onShowHistoryClick: () => void;
+  onRunClick: () => void;
 }
 
 const useRowStyles = makeStyles((theme) => ({
@@ -312,6 +354,17 @@ function Row(props: RowProps) {
             <HistoryIcon />
           </IconButton>
         </Tooltip>
+        {entry.run_allowed && (
+          <Tooltip title="Run now">
+            <IconButton
+              aria-label="run now"
+              size="small"
+              onClick={props.onRunClick}
+            >
+              <PlayArrowIcon />
+            </IconButton>
+          </Tooltip>
+        )}
       </TableCell>
     </TableRow>
   );
