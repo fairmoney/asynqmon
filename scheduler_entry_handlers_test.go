@@ -125,7 +125,9 @@ func TestRunSchedulerEntry(t *testing.T) {
 
 	do := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(method, "/monitoring"+path, nil))
+		req := httptest.NewRequest(method, "/monitoring"+path, nil)
+		req.Header.Set(runNowCSRFHeader, runNowCSRFValue)
+		h.ServeHTTP(rec, req)
 		return rec
 	}
 
@@ -151,6 +153,16 @@ func TestRunSchedulerEntry(t *testing.T) {
 	// ReadOnly still blocks the other mutating routes.
 	if rec := do("POST", "/api/queues/critical:pause"); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("pause queue under ReadOnly: status = %d, want 405", rec.Code)
+	}
+
+	// A request without the CSRF header is refused, and nothing is enqueued.
+	noHeader := httptest.NewRecorder()
+	h.ServeHTTP(noHeader, httptest.NewRequest("POST", "/monitoring/api/scheduler_entries/"+ids["allowed:task"]+"/run", nil))
+	if noHeader.Code != http.StatusForbidden {
+		t.Errorf("run without %s: status = %d, want 403; body = %s", runNowCSRFHeader, noHeader.Code, noHeader.Body)
+	}
+	if tasks, _ := insp.ListPendingTasks("critical"); len(tasks) != 0 {
+		t.Errorf("run without %s: pending tasks in critical = %d, want 0", runNowCSRFHeader, len(tasks))
 	}
 
 	// Unknown entry.

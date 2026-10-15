@@ -1065,6 +1065,8 @@ export async function runSchedulerEntry(
   const resp = await axios({
     method: "post",
     url: `${getBaseUrl()}/scheduler_entries/${entryId}/run`,
+    // The server requires this header on run-now requests (CSRF protection).
+    headers: { "X-Requested-With": "XMLHttpRequest" },
   });
   return resp.data;
 }
