@@ -77,8 +77,8 @@ func hasRoute(t *testing.T, h *HTTPHandler, tmpl, method string) bool {
 	return found
 }
 
-func allowOnly(types ...string) func(string) bool {
-	return func(taskType string) bool {
+func allowOnly(types ...string) func(string, string) bool {
+	return func(taskType, _ string) bool {
 		for _, t := range types {
 			if t == taskType {
 				return true
@@ -199,6 +199,89 @@ func TestRunSchedulerEntry(t *testing.T) {
 	// Duplicate: the Unique option of the entry rejects a second run.
 	if rec := do("POST", "/api/scheduler_entries/"+ids["allowed:task"]+"/run"); rec.Code != http.StatusConflict {
 		t.Errorf("duplicate run: status = %d, want 409; body = %s", rec.Code, rec.Body)
+	}
+	if tasks, _ := insp.ListPendingTasks("critical"); len(tasks) != 1 {
+		t.Errorf("pending tasks in critical = %d, want 1", len(tasks))
+	}
+}
+
+func TestEntryQueue(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []asynq.Option
+		want string
+	}{
+		{"no options", nil, "default"},
+		{"queue option", []asynq.Option{asynq.MaxRetry(0), asynq.Queue("critical")}, "critical"},
+		{"last queue wins", []asynq.Option{asynq.Queue("low"), asynq.Queue("critical")}, "critical"},
+	}
+	for _, tc := range tests {
+		if got := entryQueue(tc.opts); got != tc.want {
+			t.Errorf("%s: entryQueue = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A stale entry for the same task type, written without options (for example by
+// an older scheduler), must not get Run now: it would enqueue on "default".
+func TestRunSchedulerEntryRefusesStaleEntryOnWrongQueue(t *testing.T) {
+	opt := testRedisOpt(t)
+	startScheduler(t, opt, func(s *asynq.Scheduler) {
+		if _, err := s.Register("@every 1h", asynq.NewTask("same:task", nil), asynq.Queue("critical")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Register("@every 1h", asynq.NewTask("same:task", nil)); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	allow := func(taskType, queue string) bool { return taskType == "same:task" && queue == "critical" }
+	h := New(Options{RootPath: "/monitoring", RedisConnOpt: opt, ReadOnly: true, AllowRunNow: allow})
+	defer h.Close()
+	insp := asynq.NewInspector(opt)
+	defer insp.Close()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/monitoring/api/scheduler_entries", nil))
+	var list struct {
+		Entries []schedulerEntry `json:"entries"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	var good, stale string
+	for _, e := range list.Entries {
+		if len(e.Opts) > 0 {
+			good = e.ID
+			if !e.RunAllowed {
+				t.Errorf("entry with Queue(critical): run_allowed = false, want true")
+			}
+		} else {
+			stale = e.ID
+			if e.RunAllowed {
+				t.Errorf("entry without options: run_allowed = true, want false")
+			}
+		}
+	}
+	if good == "" || stale == "" {
+		t.Fatalf("want one entry with options and one without, got %+v", list.Entries)
+	}
+
+	post := func(id string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/monitoring/api/scheduler_entries/"+id+"/run", nil)
+		req.Header.Set(runNowCSRFHeader, runNowCSRFValue)
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post(stale); code != http.StatusForbidden {
+		t.Errorf("run stale entry: status = %d, want 403", code)
+	}
+	if tasks, _ := insp.ListPendingTasks("default"); len(tasks) != 0 {
+		t.Errorf("pending tasks in default = %d, want 0", len(tasks))
+	}
+	if code := post(good); code != http.StatusOK {
+		t.Errorf("run entry with Queue(critical): status = %d, want 200", code)
 	}
 	if tasks, _ := insp.ListPendingTasks("critical"); len(tasks) != 1 {
 		t.Errorf("pending tasks in critical = %d, want 1", len(tasks))
